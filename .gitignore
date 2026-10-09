@@ -6,3 +6,4 @@ node_modules/
 artifacts/
 dist/
 _site/
+.vercel/

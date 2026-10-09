@@ -1,0 +1,8 @@
+{
+  "name": "virtuosa-cg",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/admin-auth.test.cjs"
+  }
+}
