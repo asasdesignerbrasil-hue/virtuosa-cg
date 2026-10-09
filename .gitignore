@@ -1,0 +1,8 @@
+virtuosa-cg-backup/
+node_modules/
+.env
+.env.*
+*.log
+artifacts/
+dist/
+_site/

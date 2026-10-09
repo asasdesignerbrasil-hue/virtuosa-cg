@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel Virtuosa CG</title>
+<link rel="stylesheet" href="admin.css">
+<link rel="icon" href="../src/img/favicon.png" type="image/png">
+<meta name="description" content="Painel administrativo da Virtuosa CG">
+<meta name="robots" content="noindex,nofollow">
+</head>
+<body class="is-logged-out">
+<button id="menu-toggle" class="menu-toggle" aria-label="Abrir menu">☰</button>
+
+<div class="admin-wrap logged-out">
+<aside class="sidebar" id="sidebar">
+<h2>Virtuosa CG</h2>
+<nav>
+<button data-view="dashboard" class="nav-btn active">Dashboard</button>
+<button data-view="produtos" class="nav-btn">Produtos</button>
+<button data-view="novo" class="nav-btn">Adicionar</button>
+<!-- NOVO BOTÃO DE AVISO -->
+<button data-view="config" class="nav-btn">Avisos</button>
+<button id="logout" class="nav-btn danger">Sair</button>
+</nav>
+<div class="info">Conectado como: <span id="admin-email">—</span></div>
+</aside>
+
+<main class="admin-main">
+<!-- Login view -->
+<section id="login-view" class="panel">
+<img class="login-logo" src="../src/img/logo.png" alt="Virtuosa CG Moda Evangélica">
+<h3>Entrar no painel Virtuosa CG</h3>
+<form id="login-form">
+<label>Email
+<input type="email" id="login-email" autocomplete="username" autocapitalize="none" required>
+</label>
+<label>Senha
+<input type="password" id="login-pass" autocomplete="current-password" required>
+</label>
+<div class="row">
+<button class="btn btn-primary" id="btn-login" type="submit">Entrar</button>
+<button class="btn btn-text" id="forgot-password" type="button">Esqueci minha senha</button>
+</div>
+<p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite" hidden></p>
+<p class="small muted"><a href="../index.html">Voltar à loja</a></p>
+</form>
+<noscript>Ative o JavaScript para acessar o painel.</noscript>
+</section>
+
+<section id="reset-view" class="panel" hidden>
+<h3>Nova senha</h3>
+<form id="reset-form">
+<label>Nova senha
+<input type="password" id="new-password" autocomplete="new-password" minlength="8" required>
+</label>
+<label>Confirmar nova senha
+<input type="password" id="confirm-password" autocomplete="new-password" minlength="8" required>
+</label>
+<div class="row">
+<button class="btn btn-primary" id="save-password" type="submit">Salvar senha</button>
+<button class="btn btn-text" id="cancel-recovery" type="button">Voltar ao login</button>
+</div>
+<p id="reset-feedback" class="auth-feedback" role="status" aria-live="polite" hidden></p>
+</form>
+</section>
+
+<!-- ATUALIZADO: Dashboard summary -->
+<section id="dashboard-view" class="panel" hidden>
+<h3>Visão Geral</h3>
+<div class="cards">
+<div class="card small">Produtos Ativos: <strong id="count-prod">0</strong></div>
+<div class="card small">Pedidos Hoje: <strong id="count-pedidos-hoje">0</strong></div>
+<div class="card small">Ganhos Hoje: <strong id="count-ganhos-hoje">R$ 0,00</strong></div>
+</div>
+</section>
+
+<!-- Produtos list -->
+<section id="produtos-view" class="panel" hidden>
+<h3>Produtos</h3>
+<div id="produtos-list" class="table"></div>
+</section>
+
+
+<!-- Novo / Editar produto -->
+<section id="novo-view" class="panel" hidden>
+<h3 id="form-title">Adicionar Produto</h3>
+<form id="produto-form">
+<input type="hidden" id="produto-id">
+<label>Nome
+<input id="produto-nome" required>
+</label>
+<label>Descrição
+<textarea id="produto-desc" rows="3"></textarea>
+</label>
+<label>Preço (R$)
+<input id="produto-preco" type="number" step="0.01" required>
+</label>
+<label>Código do Produto (numérico para WhatsApp)
+<input id="produto-codigo" type="number" required>
+</label>
+<label>Categoria
+<select id="produto-cat">
+<option value="vestidos">Vestidos</option>
+<option value="saias">Saias</option>
+<option value="blusas">Blusas</option>
+<option value="conjuntos">Conjuntos</option>
+<option value="acessorios">Acessórios</option>
+<option value="promocoes">Promoções</option>
+</select>
+</label>
+
+<!-- Upload de Imagem -->
+<label>Imagem do produto
+<input id="produto-upload" type="file" accept="image/png, image/jpeg, image/webp">
+</label>
+<div class="upload-preview">
+  <img id="img-preview" src="" alt="Preview da imagem" hidden>
+  <span id="upload-status"></span>
+</div>
+<label>Link da imagem
+<input id="produto-img" type="url" placeholder="https://...">
+</label>
+<label>
+Disponível
+<input id="produto-active" type="checkbox" checked>
+</label>
+<div class="row">
+<button type="submit" class="btn btn-primary" id="save-prod">Salvar</button>
+<button type="button" class="btn" id="cancel-edit">Cancelar</button>
+</div>
+</form>
+</section>
+
+<!-- NOVA SEÇÃO: Banner de Aviso -->
+<section id="config-view" class="panel" hidden>
+<h3>Banner de Aviso</h3>
+<form id="config-form">
+<label>Texto do Aviso
+<textarea id="banner-text" rows="3" placeholder="Ex: Estamos fechados hoje."></textarea>
+</label>
+<div class="row">
+<button type="submit" class="btn btn-primary" id="save-config">Salvar Aviso</button>
+</div>
+</form>
+</section>
+
+
+</main>
+</div>
+
+<script type="module" src="admin.js"></script>
+</body>
+</html>
