@@ -51,13 +51,17 @@ body {
 }
 
 .logo {
-    width: min(160px, 48vw);
-    height: auto;
+    width: 100px;
+    height: 100px;
+    flex-shrink: 0;
 }
 
 .logo img {
     width: 100%;
-    height: auto;
+    height: 100%;
+    object-fit: contain;
+    padding: 6px;
+    background: var(--white);
     display: block;
     border-radius: var(--radius);
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
