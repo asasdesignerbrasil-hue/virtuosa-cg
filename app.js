@@ -1,4 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm';
+import { cartItemFromProduct, composeWhatsAppMessage, escapeHtml, reconcileCart, stockQuantity } from './src/js/order-utils.mjs';
 
 const SUPABASE_URL = 'https://ovospsvsraiudnqfapeb.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im92b3Nwc3ZzcmFpdWRucWZhcGViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA4MDM5NTgsImV4cCI6MjA3NjM3OTk1OH0.alUcXs_g4_xaV7r_2xCQPofdOKB3aFnt_3BDCy2AjgM';
@@ -20,7 +21,15 @@ const phone = '5583987118599'; // formato 55 + DDD + número
 
 // estado do carrinho
 const CART_KEY = 'virtuosa_cg_cart_v1';
-let cart = JSON.parse(localStorage.getItem(CART_KEY) || '[]');
+let cart = [];
+try {
+  const stored = JSON.parse(localStorage.getItem(CART_KEY) || '[]');
+  if (Array.isArray(stored)) cart = stored.filter(item => item && item.id != null && Number.isInteger(item.qty) && item.qty > 0);
+} catch {
+  localStorage.removeItem(CART_KEY);
+}
+const productsById = new Map();
+let isOrdering = false;
 
 // DOM
 const cartCount = q('#cart-count');
@@ -29,6 +38,7 @@ const cartItemsWrap = q('#cart-items');
 const cartTotalEl = q('#cart-total');
 const btnCart = q('#btn-cart');
 const whatsappOrderBtn = q('#whatsapp-order');
+const customerForm = q('#customer-form');
 const yearEl = q('#year');
 const customerNameInput = q('#customer-name');
 const customerPhoneInput = q('#customer-phone');
@@ -56,121 +66,120 @@ function formatProductTitle(product){
 }
 
 function renderCart(){
-// ... (função existente, sem mudanças) ...
   cartCount.textContent = cart.reduce((s,i)=>s+i.qty,0);
   cartItemsWrap.innerHTML = '';
-  let total = 0;
-
   if(cart.length === 0){
     cartItemsWrap.innerHTML = '<p>Seu carrinho está vazio.</p>';
   } else {
     cart.forEach(it => {
       const div = document.createElement('div');
       div.className = 'cart-item';
+      const stock = stockQuantity(it);
+      const unavailable = it.active === false || stock === 0;
+      const atLimit = unavailable || (stock != null && it.qty >= stock);
+      const warning = unavailable ? 'Produto indisponível.' : stock != null && it.qty > stock ? `Disponível: ${stock} unidade(s).` : '';
       div.innerHTML = `
-        <div>${it.code} — ${it.name} x ${it.qty}</div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          ${formatCurrency(it.price*it.qty)}
-          <button class="btn small btn-remove" data-id="${it.id}" data-action="remove" title="Remover 1">-</button>
+        ${it.image_url ? `<img src="${escapeHtml(it.image_url)}" alt="${escapeHtml(it.name)}">` : ''}
+        <div class="cart-item-details">
+          <h4 class="cart-item-name">${escapeHtml(it.code)} — ${escapeHtml(it.name)}</h4>
+          <p class="cart-item-description">${escapeHtml(it.description || '')}</p>
+          <div>${formatCurrency(it.price)} por unidade</div>
+          ${warning ? `<p class="cart-stock-warning">${warning}</p>` : ''}
+          <div class="cart-item-quantity">
+            <button type="button" class="btn small" data-id="${escapeHtml(it.id)}" data-action="remove" aria-label="Remover uma unidade de ${escapeHtml(it.name)}">-</button>
+            <span>${it.qty}</span>
+            <button type="button" class="btn small" data-id="${escapeHtml(it.id)}" data-action="increase" aria-label="Adicionar uma unidade de ${escapeHtml(it.name)}" ${atLimit ? 'disabled' : ''}>+</button>
+            <strong>${formatCurrency(it.price * it.qty)}</strong>
+          </div>
         </div>`;
       cartItemsWrap.appendChild(div);
     });
   }
-
-  total = cart.reduce((s,i)=>s + i.price * i.qty,0);
+  const total = cart.reduce((s,i)=>s + i.price * i.qty,0);
   cartTotalEl.textContent = formatCurrency(total);
+  whatsappOrderBtn.disabled = cart.length === 0 || isOrdering;
 }
 
-whatsappOrderBtn.addEventListener('click', async function(e) {
+customerForm.addEventListener('submit', async function(e) {
   e.preventDefault();
-
-  const customerName = customerNameInput.value.trim();
-  const customerPhone = customerPhoneInput.value.trim();
-  const customerAddress = customerAddressInput.value.trim();
-
-  // 1. Validação
-  if (!customerName || !customerPhone) {
-    alert('Por favor, informe seu nome e telefone para continuar.');
-    customerNameInput.focus();
-    return;
-  }
-
-  if (cart.length === 0) {
-    alert('Seu carrinho está vazio.');
-    return;
-  }
-
-  // 2. Preparar dados
-  let total = cart.reduce((s,i)=>s + i.price * i.qty,0);
-  const pedidoItens = cart.map(i=> `(${i.code}) ${i.name} - ${i.qty}x`);
-  const resumoPedido = pedidoItens.join('; '); // Resumo para o DB
-  const totalCents = Math.round(total * 100);
-
-  // 3. Salvar no Supabase
-  try {
-    const payload = {
-      resumo: resumoPedido,
-      total_cents: totalCents,
-      whatsapp_number: customerPhone,
-      customer_name: customerName,
-      address: customerAddress || null
-    };
-
-    const { error } = await supabase.from('pedidos').insert(payload);
-
-    if (error) {
-        throw error;
-    }
-
-    console.log('Pedido salvo no banco de dados!');
-
-  } catch (error) {
-    console.error('Erro ao salvar pedido no DB:', error.message);
-  }
-
-  // 4. Montar URL do WhatsApp
-  const pedidoHeader = '*NOVO PEDIDO - VIRTUOSA CG*';
-  const clienteInfo = [
-    `*Cliente:* ${customerName}`,
-    `*Telefone:* ${customerPhone}`
-  ];
-  if (customerAddress) {
-    clienteInfo.push(`*Endereço:* ${customerAddress}`);
-  }
-
-  const pedidoTotal = `*Total:* ${formatCurrency(total)}`;
-  const pedidoOrigem = `*Origem:* ${SITE_URL}`;
-
-  // Junta com quebras de linha reais (\n)
-  const text = [
-    pedidoHeader,
-    ...clienteInfo,
-    '---',
-    '*Itens:*',
-    ...pedidoItens,
-    '---',
-    pedidoTotal,
-    pedidoOrigem
-  ].join('\n');
-
-  const encodedText = encodeURIComponent(text);
-
-  const url = `https://wa.me/${phone}?text=${encodedText}`;
-  window.open(url, '_blank');
+  if (isOrdering || !customerForm.reportValidity() || cart.length === 0) return;
+  await openWhatsAppOrder(cart, {
+    name: customerNameInput.value.trim(),
+    phone: customerPhoneInput.value.trim(),
+    address: customerAddressInput.value.trim()
+  }, true);
 });
 
-function addToCart(id, name, price, code){
-// ... (função existente, sem mudanças) ...
-  const found = cart.find(i=>i.id === id);
-  if(found){
-    found.qty += 1;
-  } else {
-    cart.push({id, name, price, qty:1, code});
+async function openWhatsAppOrder(requestedItems, customer = {}, fromCart = false) {
+  if (isOrdering) return;
+  requestedItems = requestedItems.map(item => ({ ...item }));
+  // Open during the user gesture so mobile browsers can keep the WhatsApp tab.
+  const popup = window.open('about:blank', '_blank');
+  if (popup) popup.opener = null;
+  isOrdering = true;
+  renderCart();
+  try {
+    const { data, error } = await supabase.from('produtos').select('*')
+      .in('id', requestedItems.map(item => item.id));
+    if (error) throw error;
+    const refreshed = reconcileCart(requestedItems, data);
+    if (refreshed.changed || refreshed.items.length === 0) {
+      popup?.close();
+      if (fromCart) {
+        cart = refreshed.items;
+        saveCart();
+      }
+      await loadMenu();
+      alert('A disponibilidade ou o preço mudou. Confira os produtos antes de continuar.');
+      return;
+    }
+    const text = composeWhatsAppMessage(refreshed.items, customer, SITE_URL);
+    if (fromCart) {
+      cart = refreshed.items;
+      saveCart();
+      try {
+        const { error: orderError } = await supabase.from('pedidos').insert({
+          resumo: text,
+          total_cents: Math.round(cart.reduce((sum, item) => sum + item.price * item.qty, 0) * 100),
+          whatsapp_number: customer.phone,
+          customer_name: customer.name,
+          address: customer.address || null
+        });
+        if (orderError) console.error('Erro ao registrar pedido:', orderError.message);
+      } catch (orderError) {
+        console.error('Erro ao registrar pedido:', orderError.message);
+      }
+    }
+    const href = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+    if (popup && !popup.closed) popup.location.replace(href);
+    else window.location.assign(href);
+  } catch (error) {
+    popup?.close();
+    alert('Não foi possível verificar os produtos. Tente novamente.');
+    console.error('Erro ao preparar pedido:', error.message);
+  } finally {
+    isOrdering = false;
+    renderCart();
   }
+}
+
+function addToCart(id){
+  if (isOrdering) return;
+  const product = productsById.get(String(id));
+  if (!product || product.active === false) return;
+  const found = cart.find(item => String(item.id) === String(id));
+  const stock = stockQuantity(product);
+  if (stock != null && (found?.qty || 0) >= stock) {
+    alert(stock === 0 ? 'Este produto está esgotado.' : 'Você atingiu a quantidade disponível deste produto.');
+    return;
+  }
+  if (found) Object.assign(found, cartItemFromProduct(product, found.qty + 1));
+  else cart.push(cartItemFromProduct(product));
   saveCart();
 }
 
 function removeFromCart(id){
+  if (isOrdering) return;
 // ... (função existente, sem mudanças) ...
   const idx = cart.findIndex(i=>i.id === id);
   if(idx > -1){
@@ -186,8 +195,7 @@ document.addEventListener('click', function(e){
   const addBtn = e.target.closest('.btn-cart[data-action="add"]');
   if(addBtn){
     const card = addBtn.closest('.card');
-    const code = card.dataset.code || card.dataset.id;
-    addToCart(card.dataset.id, card.dataset.name, Number(card.dataset.price), code);
+    addToCart(card.dataset.id);
     return;
   }
   const removeBtn = e.target.closest('button[data-action="remove"]');
@@ -200,18 +208,18 @@ document.addEventListener('click', function(e){
     alert('Descrição completa:\n' + moreBtn.closest('.card').querySelector('.item-desc').textContent);
     return;
   }
+  const increaseBtn = e.target.closest('button[data-action="increase"]');
+  if (increaseBtn) {
+    addToCart(increaseBtn.dataset.id);
+    return;
+  }
   const whatsappBtn = e.target.closest('.btn-whatsapp');
   if(whatsappBtn){
-    // Este é o botão "Comprar pelo WhatsApp" do card individual
+    e.preventDefault();
     const card = whatsappBtn.closest('.card');
-    const code = card.dataset.code || card.dataset.id;
-    const total = formatCurrency(Number(card.dataset.price));
-    const simpleText = `PEDIDO VIRTUOSA CG\nProduto ${code}\nQtd 1\nTOTAL ${total}\n${SITE_URL}`;
-    const encodedSimpleText = encodeURIComponent(simpleText);
-
-    const href = `https://wa.me/${phone}?text=${encodedSimpleText}`;
-    whatsappBtn.setAttribute('href', href);
-    // Deixa o link ser seguido normalmente
+    const product = productsById.get(card.dataset.id);
+    if (!product || stockQuantity(product) === 0 || product.active === false) return;
+    openWhatsAppOrder([cartItemFromProduct(product)]);
     return;
   }
 });
@@ -231,6 +239,16 @@ cartPanel.querySelector('.close-panel').addEventListener('click', function(){
   cartPanel.setAttribute('aria-hidden', 'true');
   btnCart.setAttribute('aria-expanded', 'false');
 });
+
+function updateCartViewport() {
+  const viewport = window.visualViewport;
+  document.documentElement.style.setProperty('--cart-viewport-height', `${viewport?.height || window.innerHeight}px`);
+  document.documentElement.style.setProperty('--cart-viewport-top', `${viewport?.offsetTop || 0}px`);
+}
+window.addEventListener('resize', updateCartViewport);
+window.visualViewport?.addEventListener('resize', updateCartViewport);
+window.visualViewport?.addEventListener('scroll', updateCartViewport);
+updateCartViewport();
 
 // Filtros
 qa('.filter-btn').forEach(btn=>{
@@ -281,6 +299,14 @@ async function loadMenu() {
         return;
     }
 
+    productsById.clear();
+    data.forEach(product => productsById.set(String(product.id), product));
+    cart = cart.map(item => {
+      const product = productsById.get(String(item.id));
+      return product ? cartItemFromProduct(product, item.qty) : { ...item, active: false, stock: 0 };
+    });
+    saveCart();
+
     if (data.length === 0) {
         menuGrid.innerHTML = '<p>Nenhum produto disponível no momento.</p>';
         return;
@@ -293,23 +319,29 @@ async function loadMenu() {
     for (const p of data) {
         const card = document.createElement('article');
         card.className = 'card';
+        card.id = `produto-${p.id}`;
         card.dataset.id = p.id;
-        card.dataset.code = p.codigo;
+        card.dataset.code = p.codigo ?? p.id;
         card.dataset.category = p.category;
         card.dataset.name = p.name;
         card.dataset.price = p.price;
 
+        const stock = stockQuantity(p);
+        const soldOut = stock === 0;
+        const item = cartItemFromProduct(p);
+        const buyHref = `https://wa.me/${phone}?text=${encodeURIComponent(composeWhatsAppMessage([item], {}, SITE_URL))}`;
         card.innerHTML = `
-            <img src="${p.image_url || placeholderImg}" alt="${p.name}" onerror="this.onerror=null;this.src='${placeholderImg}';">
+            <img src="${escapeHtml(p.image_url || placeholderImg)}" alt="${escapeHtml(p.name)}" onerror="this.onerror=null;this.src='${placeholderImg}';">
             <div class="card-body">
-              <h3 class="item-name">${formatProductTitle(p)}</h3>
-              <p class="item-desc">${p.description || 'Sem descrição.'}</p>
+              <h3 class="item-name">${escapeHtml(formatProductTitle(p))}</h3>
+              <p class="item-desc">${escapeHtml(p.description || 'Sem descrição.')}</p>
+              ${stock != null ? `<p class="stock-label ${soldOut ? 'sold-out' : ''}">${soldOut ? 'Esgotado' : `${stock} unidade(s) disponível(is)`}</p>` : ''}
               <div class="card-footer">
                 <span class="price">${formatCurrency(p.price)}</span>
                 <div class="btns">
-                  <button class="btn small btn-cart" data-action="add">Adicionar</button>
+                  <button class="btn small btn-cart" data-action="add" ${soldOut ? 'disabled' : ''}>Adicionar</button>
                   <button class="btn small btn-more">Ver mais</button>
-                  <a class="btn small btn-whatsapp" href="#" data-wtext="${p.codigo}">Comprar pelo WhatsApp</a>
+                  <a class="btn small btn-whatsapp" href="${soldOut ? '#' : buyHref}" aria-disabled="${soldOut}" target="_blank" rel="noopener noreferrer">Comprar pelo WhatsApp</a>
                 </div>
               </div>
             </div>

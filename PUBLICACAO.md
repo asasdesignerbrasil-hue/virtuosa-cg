@@ -45,6 +45,22 @@ O catálogo anterior foi desativado, sem excluir produtos ou pedidos. Cadastre a
 
 WhatsApp da loja: `(83) 98711-8599`.
 
+Instagram da loja: https://www.instagram.com/virtuosacg2021
+
+## Estoque e pedidos
+
+Em Produtos, informe a quantidade em Estoque e use Salvar estoque após uma venda confirmada. A quantidade também pode ser editada no formulário do produto. Estoque zero deixa o produto esgotado e bloqueia novas compras; deixar o campo vazio mantém o comportamento dos produtos que ainda não tiveram a quantidade inicial informada.
+
+Enviar uma solicitação pelo WhatsApp não reduz o estoque automaticamente. A venda é confirmada no atendimento, e a quantidade pode então ser ajustada no painel. O carrinho confere novamente disponibilidade e preço antes de enviar o pedido. A mensagem inclui nome, código, descrição completa, categoria, quantidade, preço unitário, subtotal, foto, link do produto, total e dados do cliente.
+
+## Proteção do login
+
+O painel integra o Cloudflare Turnstile ao login e à recuperação de senha. A Site Key é o identificador público necessário para exibir o widget e é lida da configuração `turnstile_site_key` no Supabase. A Secret Key é configurada apenas em Supabase Auth > Bot and Abuse Protection; ela nunca deve entrar no código, no repositório ou no frontend.
+
+O widget deve permitir `virtuosacg.store` nos hostnames da Cloudflare. Para testar o login em outro endereço, como uma URL da Vercel ou localhost, esse hostname também precisa estar autorizado no widget.
+
+Fonte: https://supabase.com/docs/guides/auth/auth-captcha
+
 ## Verificação local
 
 ```powershell

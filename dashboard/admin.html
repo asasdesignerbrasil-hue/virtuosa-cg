@@ -38,6 +38,7 @@
 <label>Senha
 <input type="password" id="login-pass" autocomplete="current-password" required>
 </label>
+<div id="login-captcha" class="login-captcha" hidden></div>
 <div class="row">
 <button class="btn btn-primary" id="btn-login" type="submit">Entrar</button>
 <button class="btn btn-text" id="forgot-password" type="button">Esqueci minha senha</button>
@@ -95,6 +96,9 @@
 </label>
 <label>Preço (R$)
 <input id="produto-preco" type="number" step="0.01" required>
+</label>
+<label>Quantidade em estoque
+<input id="produto-estoque" type="number" min="0" step="1" inputmode="numeric" placeholder="Não informado">
 </label>
 <label>Código do Produto (numérico para WhatsApp)
 <input id="produto-codigo" type="number" required>

@@ -29,7 +29,7 @@
       <div class="actions">
         <a href="https://wa.me/5583987118599" class="btn btn-outline" target="_blank" rel="noopener">WhatsApp</a>
         <a href="#cart" class="btn btn-outline" id="btn-cart" aria-controls="cart" aria-expanded="false">Carrinho (<span id="cart-count">0</span>)</a>
-        <a href="admin/" class="btn btn-primary" id="admin-login">Admin</a>
+        <a href="https://www.instagram.com/virtuosacg2021" class="btn btn-outline" target="_blank" rel="noopener noreferrer">Instagram</a>
       </div>
     </div>
   </header>
@@ -66,8 +66,11 @@
     </section>
 
     <aside id="cart" class="cart-panel" aria-hidden="true">
-      <button class="close-panel" aria-label="Fechar">×</button>
-      <h3>Seu pedido</h3>
+      <div class="cart-header">
+        <h3>Seu pedido</h3>
+        <button class="close-panel" type="button" aria-label="Fechar carrinho">×</button>
+      </div>
+      <div class="cart-content">
       <div id="cart-items"></div>
       <div class="cart-total">Total: <strong id="cart-total">R$ 0,00</strong></div>
       <form id="customer-form" class="customer-form-wrap">
@@ -87,8 +90,9 @@
           </div>
         </div>
       </form>
+      </div>
       <div class="cart-actions">
-        <a id="whatsapp-order" class="btn btn-primary" href="#">Finalizar pelo WhatsApp</a>
+        <button id="whatsapp-order" class="btn btn-primary" type="submit" form="customer-form">Finalizar pelo WhatsApp</button>
       </div>
     </aside>
 

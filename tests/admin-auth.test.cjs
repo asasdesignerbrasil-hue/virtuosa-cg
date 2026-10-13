@@ -5,13 +5,14 @@ const vm = require('node:vm');
 const { test } = require('node:test');
 
 const source = fs.readFileSync(path.join(__dirname, '../dashboard/admin.js'), 'utf8')
-  .replace(/^import[^\n]+\n/, '');
+  .replace(/^import[^\n]+\n/gm, '');
 const session = { user: { id: 'test-admin', email: 'admin@example.invalid' } };
 
-async function createHarness(initialSession = null, search = '') {
+async function createHarness(initialSession = null, search = '', settings = {}) {
+  const { escapeHtml } = await import('../src/js/order-utils.mjs');
   const elements = new Map();
   const deferred = [];
-  const calls = { channels: 0, removed: 0, updated: 0, recovery: null };
+  const calls = { channels: 0, removed: 0, updated: 0, recovery: null, captchaResets: 0, authAttempts: 0, alerts: [], stockUpdates: [], stockFilters: [] };
   const views = ['login', 'dashboard', 'produtos', 'novo', 'config', 'reset'];
   function element(id) {
     if (!elements.has(id)) {
@@ -39,19 +40,29 @@ async function createHarness(initialSession = null, search = '') {
   }
   const document = {
     body: element('body'), getElementById: element, createElement: element,
-    querySelector: selector => element(selector), querySelectorAll: () => []
+    querySelector: selector => element(selector), querySelectorAll: () => [],
+    head: { appendChild(script) { script.listeners.load?.forEach(callback => callback()); } }
   };
   let activeSession = initialSession;
   let authCallback;
   let signInError = null;
-  const query = {
-    select() { return this; }, eq() { return this; }, in() { return this; },
-    order() { return this; }, gte() { return this; },
-    single() { return Promise.resolve({ data: { value: '' }, error: null }); },
-    then(resolve) { return Promise.resolve({ data: [], error: null }).then(resolve); }
-  };
+  function queryFor(table) {
+    let values;
+    return {
+      select() { return this; }, in() { return this; }, order() { return this; }, gte() { return this; },
+      eq(column, value) { if (values) calls.stockFilters.push([column, value]); return this; },
+      is(column, value) { if (values) calls.stockFilters.push([column, value]); return this; },
+      update(payload) { values = payload; calls.stockUpdates.push(payload); return this; },
+      single() { return Promise.resolve({ data: { value: '' }, error: null }); },
+      maybeSingle() {
+        if (values) return Promise.resolve({ data: settings.stockConflict ? null : { id: 19, ...values }, error: settings.stockError || null });
+        return Promise.resolve({ data: table === 'configuracoes' && settings.captchaSiteKey ? { value: settings.captchaSiteKey } : null, error: null });
+      },
+      then(resolve) { return Promise.resolve({ data: [], error: null }).then(resolve); }
+    };
+  }
   const client = {
-    from: () => query,
+    from: queryFor,
     channel() {
       calls.channels++;
       return { on() { return this; }, subscribe() { return this; } };
@@ -61,6 +72,7 @@ async function createHarness(initialSession = null, search = '') {
       getSession: async () => ({ data: { session: activeSession }, error: null }),
       onAuthStateChange(callback) { authCallback = callback; },
       async signInWithPassword(credentials) {
+        calls.authAttempts++;
         calls.credentials = credentials;
         if (signInError) return { error: signInError };
         activeSession = session;
@@ -75,10 +87,20 @@ async function createHarness(initialSession = null, search = '') {
     }
   };
   const context = vm.createContext({
-    createClient: () => client, document, URL, URLSearchParams,
+    createClient: () => client, escapeHtml, document, URL, URLSearchParams,
+    window: {
+      turnstile: {
+        render(container, options) {
+          if (settings.renderError) throw new Error('Widget unavailable');
+          calls.captchaOptions = options;
+          return 'widget-id';
+        },
+        reset() { calls.captchaResets++; }
+      }
+    },
     location: { search, hash: '', pathname: '/dashboard/admin.html', href: `https://virtuosacg.store/dashboard/admin.html${search}` },
     history: { replaceState() {} }, setTimeout: callback => deferred.push(callback),
-    console: { log() {}, error() {} }, alert(message) { throw new Error(message); }
+    console: { log() {}, error() {} }, alert(message) { calls.alerts.push(message); }
   });
   vm.runInContext(source, context);
   await new Promise(resolve => setImmediate(resolve));
@@ -91,8 +113,8 @@ async function createHarness(initialSession = null, search = '') {
       deferred.splice(0).forEach(callback => callback());
       await new Promise(resolve => setImmediate(resolve));
     },
-    async fire(id, eventName = 'click') {
-      await Promise.all(element(id).listeners[eventName].map(callback => callback({ preventDefault() {} })));
+    async fire(id, eventName = 'click', event = {}) {
+      await Promise.all(element(id).listeners[eventName].map(callback => callback({ preventDefault() {}, ...event })));
       await new Promise(resolve => setImmediate(resolve));
     }
   };
@@ -169,4 +191,82 @@ test('logout and an expired recovery link return to login', async () => {
   const expired = await createHarness(null, '?recovery=1');
   assert.equal(expired.element('reset-view').hidden, true);
   assert.match(expired.element('auth-feedback').textContent, /expirou/);
+});
+
+test('Turnstile blocks authentication without a token and forwards a verified token', async () => {
+  const h = await createHarness(null, '', { captchaSiteKey: 'test-public-widget' });
+  await h.fire('login-form', 'submit');
+  assert.equal(h.calls.authAttempts, 0);
+  assert.match(h.element('auth-feedback').textContent, /verificação de segurança/);
+  h.calls.captchaOptions.callback('test-captcha-token');
+  await h.fire('login-form', 'submit');
+  assert.equal(h.calls.credentials.options.captchaToken, 'test-captcha-token');
+  assert.equal(h.element('dashboard-view').hidden, false);
+  assert.ok(h.calls.captchaResets > 0);
+});
+
+test('expired CAPTCHA prevents password recovery and a new token is passed to Supabase', async () => {
+  const h = await createHarness(null, '', { captchaSiteKey: 'test-public-widget' });
+  h.element('login-email').value = 'admin@example.invalid';
+  h.calls.captchaOptions.callback('expired-token');
+  h.calls.captchaOptions['expired-callback']();
+  await h.fire('forgot-password');
+  assert.equal(h.calls.recovery, null);
+  h.calls.captchaOptions.callback('new-test-token');
+  await h.fire('forgot-password');
+  assert.equal(h.calls.recovery.options.captchaToken, 'new-test-token');
+});
+
+test('CAPTCHA refresh preserves login errors and password recovery confirmation', async () => {
+  const h = await createHarness(null, '', { captchaSiteKey: 'test-public-widget' });
+  h.setSignInError({ code: 'invalid_credentials' });
+  h.calls.captchaOptions.callback('first-token');
+  await h.fire('login-form', 'submit');
+  h.calls.captchaOptions.callback('refreshed-token');
+  assert.equal(h.element('auth-feedback').textContent, 'E-mail ou senha incorretos.');
+  h.element('login-email').value = 'admin@example.invalid';
+  await h.fire('forgot-password');
+  h.calls.captchaOptions.callback('next-token');
+  assert.match(h.element('auth-feedback').textContent, /Confira seu e-mail/);
+});
+
+test('unavailable widget prevents an unprotected login attempt', async () => {
+  const h = await createHarness(null, '', { captchaSiteKey: 'test-public-widget', renderError: true });
+  await h.fire('login-form', 'submit');
+  assert.equal(h.calls.authAttempts, 0);
+  assert.match(h.element('auth-feedback').textContent, /não carregou/);
+  assert.equal(h.element('btn-login').disabled, false);
+});
+
+async function saveStock(h, value, originalStock = '5') {
+  const input = h.element('stock-input');
+  input.value = value;
+  input.dataset.originalStock = originalStock;
+  input.reportValidity = () => true;
+  const feedback = h.element('stock-feedback');
+  const row = { querySelector: selector => selector === '.stock-quantity' ? input : feedback };
+  const button = { dataset: { id: '19', action: 'stock' }, closest: () => row };
+  await h.fire('produtos-list', 'click', { target: { closest: () => button } });
+  return { input, feedback, button };
+}
+
+test('stock saves validate integers and guard against concurrent stock changes', async () => {
+  const h = await createHarness(session);
+  await saveStock(h, '-1');
+  await saveStock(h, '1.5');
+  assert.equal(h.calls.stockUpdates.length, 0);
+  const { input, feedback, button } = await saveStock(h, '3');
+  assert.equal(h.calls.stockUpdates[0].stock, 3);
+  assert.deepEqual(h.calls.stockFilters, [['id', '19'], ['stock', 5]]);
+  assert.equal(input.dataset.originalStock, '3');
+  assert.equal(feedback.textContent, 'Estoque atualizado.');
+  assert.equal(button.disabled, false);
+});
+
+test('concurrent stock conflict reports a retry and does not pretend success', async () => {
+  const h = await createHarness(session, '', { stockConflict: true });
+  const { input, feedback } = await saveStock(h, '3');
+  assert.equal(input.dataset.originalStock, '5');
+  assert.equal(feedback.textContent, '');
+  assert.match(h.calls.alerts[0], /outra sessão/);
 });

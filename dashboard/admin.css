@@ -171,6 +171,37 @@ body.is-logged-out .menu-toggle {
     color: #a91c32;
 }
 
+.login-captcha {
+    margin: 12px 0;
+}
+
+.stock-control {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.stock-control label {
+    margin: 0;
+}
+
+.stock-control input {
+    width: 96px;
+    margin: 0;
+}
+
+.stock-feedback {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: #326342;
+}
+
+.stock-feedback.error {
+    color: #a91c32;
+}
+
 .panel h3, .info, .meta {
     overflow-wrap: anywhere;
 }
@@ -218,7 +249,7 @@ input:focus-visible, button:focus-visible, a:focus-visible {
 .prod-row img {
     width: 72px;
     height: 56px;
-    object-fit: cover;
+    object-fit: contain;
     border-radius: 8px
 }
 

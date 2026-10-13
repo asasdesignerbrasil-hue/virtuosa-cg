@@ -1,4 +1,5 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
+import { escapeHtml } from '../src/js/order-utils.mjs'
 
 const SUPABASE_URL = 'https://ovospsvsraiudnqfapeb.supabase.co'
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im92b3Nwc3ZzcmFpdWRucWZhcGViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA4MDM5NTgsImV4cCI6MjA3NjM3OTk1OH0.alUcXs_g4_xaV7r_2xCQPofdOKB3aFnt_3BDCy2AjgM'
@@ -27,6 +28,8 @@ const resetView = document.getElementById('reset-view')
 const resetForm = document.getElementById('reset-form')
 const resetFeedback = document.getElementById('reset-feedback')
 const savePasswordButton = document.getElementById('save-password')
+const captchaContainer = document.getElementById('login-captcha')
+const stockInput = document.getElementById('produto-estoque')
 const produtoForm = document.getElementById('produto-form')
 const configForm = document.getElementById('config-form') // NOVO
 const produtosList = document.getElementById('produtos-list')
@@ -54,7 +57,12 @@ const countGanhosHoje = document.getElementById('count-ganhos-hoje')
 
 let currentUser = null
 let isUploading = false
+let editingStock = null
 let ordersChannel = null
+let captchaSiteKey = ''
+let captchaToken = ''
+let captchaWidgetId = null
+let captchaConfigError = false
 let recoveryMode = new URLSearchParams(location.search).get('recovery') === '1' ||
   new URLSearchParams(location.hash.slice(1)).get('type') === 'recovery'
 
@@ -93,6 +101,8 @@ function resetProdutoForm() {
 // ... (código existente sem mudanças) ...
     produtoForm.reset();
     document.getElementById('produto-id').value = '';
+    stockInput.value = '';
+    editingStock = null;
     document.getElementById('form-title').textContent = 'Adicionar Produto';
     preview.src = '';
     preview.hidden = true;
@@ -179,13 +189,17 @@ configForm.addEventListener('submit', async (e) => {
 
 
 // Auth
-function setFeedback(element, message = '', isError = false) {
+function setFeedback(element, message = '', isError = false, kind = '') {
   element.textContent = message
+  element.dataset.kind = kind
   element.hidden = !message
   element.classList.toggle('error', isError)
 }
 
 function authErrorMessage(error) {
+  if (error.code === 'captcha_required') return 'Conclua a verificação de segurança para continuar.'
+  if (error.code === 'captcha_unavailable') return 'A verificação de segurança não carregou. Atualize a página e tente novamente.'
+  if (error.code === 'captcha_failed') return 'A verificação de segurança expirou ou falhou. Tente novamente.'
   if (error.code === 'invalid_credentials') return 'E-mail ou senha incorretos.'
   if (error.code === 'email_not_confirmed') return 'Confirme seu e-mail antes de entrar.'
   if (error.status === 429) return 'Muitas tentativas. Aguarde alguns minutos e tente novamente.'
@@ -194,6 +208,63 @@ function authErrorMessage(error) {
   if (error.code === 'same_password') return 'Escolha uma senha diferente da atual.'
   if (/fetch|network/i.test(error.message || '')) return 'Falha de conexão. Verifique sua internet e tente novamente.'
   return 'Não foi possível concluir o acesso. Tente novamente em alguns instantes.'
+}
+
+async function initializeCaptcha() {
+  try {
+    const { data, error } = await supabase.from('configuracoes').select('value')
+      .eq('key', 'turnstile_site_key').maybeSingle()
+    if (error) throw error
+    captchaSiteKey = data?.value?.trim() || ''
+    if (!captchaSiteKey) return
+    captchaContainer.hidden = false
+    const script = document.createElement('script')
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.addEventListener('load', () => {
+      try {
+        captchaWidgetId = window.turnstile.render(captchaContainer, {
+        sitekey: captchaSiteKey, theme: 'light', size: 'compact', language: 'pt-br',
+        callback(token) {
+          captchaToken = token
+          if (authFeedback.dataset.kind === 'captcha') setFeedback(authFeedback)
+        },
+        'expired-callback'() {
+          captchaToken = ''
+          setFeedback(authFeedback, 'Conclua novamente a verificação de segurança.', true, 'captcha')
+        },
+        'error-callback'() {
+          captchaToken = ''
+          setFeedback(authFeedback, 'Não foi possível validar a segurança. Tente novamente.', true, 'captcha')
+        }
+        })
+      } catch {
+        captchaConfigError = true
+        setFeedback(authFeedback, authErrorMessage({ code: 'captcha_unavailable' }), true, 'captcha')
+      }
+    })
+    script.addEventListener('error', () => {
+      captchaConfigError = true
+      setFeedback(authFeedback, authErrorMessage({ code: 'captcha_unavailable' }), true, 'captcha')
+    })
+    document.head.appendChild(script)
+  } catch (error) {
+    captchaConfigError = true
+    setFeedback(authFeedback, authErrorMessage({ code: 'captcha_unavailable' }), true, 'captcha')
+  }
+}
+
+async function captchaOptions() {
+  await captchaReady
+  if (captchaConfigError) throw { code: 'captcha_unavailable' }
+  if (!captchaSiteKey) return {}
+  if (!captchaToken) throw { code: 'captcha_required' }
+  return { captchaToken }
+}
+
+function resetCaptcha() {
+  captchaToken = ''
+  if (captchaWidgetId != null && window.turnstile) window.turnstile.reset(captchaWidgetId)
 }
 
 function applyAuthSession(session, event) {
@@ -258,14 +329,16 @@ loginForm.addEventListener('submit', async (e) => {
   try {
     const email = document.getElementById('login-email').value.trim()
     const password = document.getElementById('login-pass').value
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    const options = await captchaOptions()
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password, options })
     if (error) throw error
     recoveryMode = false
     applyAuthSession(data.session)
     document.getElementById('login-pass').value = ''
   } catch (error) {
-    setFeedback(authFeedback, authErrorMessage(error), true)
+    setFeedback(authFeedback, authErrorMessage(error), true, error.code?.startsWith('captcha') ? 'captcha' : 'auth')
   } finally {
+    resetCaptcha()
     loginButton.disabled = false
     loginButton.textContent = 'Entrar'
   }
@@ -278,12 +351,14 @@ forgotPasswordButton.addEventListener('click', async () => {
   setFeedback(authFeedback)
   try {
     const redirectTo = new URL('admin.html?recovery=1', location.href).href
-    const { error } = await supabase.auth.resetPasswordForEmail(emailInput.value.trim(), { redirectTo })
+    const options = await captchaOptions()
+    const { error } = await supabase.auth.resetPasswordForEmail(emailInput.value.trim(), { redirectTo, ...options })
     if (error) throw error
     setFeedback(authFeedback, 'Confira seu e-mail para recuperar a senha.')
   } catch (error) {
-    setFeedback(authFeedback, authErrorMessage(error), true)
+    setFeedback(authFeedback, authErrorMessage(error), true, error.code?.startsWith('captcha') ? 'captcha' : 'auth')
   } finally {
+    resetCaptcha()
     forgotPasswordButton.disabled = false
   }
 })
@@ -320,6 +395,7 @@ async function logout() {
   recoveryMode = false
   history.replaceState(null, '', location.pathname)
   applyAuthSession(null)
+  resetCaptcha()
   setFeedback(authFeedback)
   setFeedback(resetFeedback)
 }
@@ -370,11 +446,17 @@ async function loadProdutos(){
     row.className = 'prod-row'
     const title = p.codigo ? `${p.codigo} — ${p.name}` : p.name
     row.innerHTML = `
-      <img src="${p.image_url || placeholderImg}" alt="${p.name}">
+      <img src="${escapeHtml(p.image_url || placeholderImg)}" alt="${escapeHtml(p.name)}">
       <div class="meta">
-        <strong>${title}</strong>
-        <div class="desc">${p.description || ''}</div>
+        <strong>${escapeHtml(title)}</strong>
+        <div class="desc">${escapeHtml(p.description || '')}</div>
         <div class="price">R$ ${Number(p.price).toFixed(2).replace('.',',')}</div>
+        <div class="stock-control">
+          <label for="stock-${p.id}">Estoque</label>
+          <input id="stock-${p.id}" class="stock-quantity" type="number" min="0" step="1" inputmode="numeric" value="${p.stock ?? ''}" data-original-stock="${p.stock ?? ''}" placeholder="Não informado">
+          <button type="button" class="btn" data-action="stock" data-id="${p.id}">Salvar estoque</button>
+        </div>
+        <p class="stock-feedback" role="status" aria-live="polite" hidden></p>
       </div>
       <div class="prod-actions">
         <button class="btn" data-action="edit" data-id="${p.id}">Editar</button>
@@ -392,6 +474,35 @@ produtosList.addEventListener('click', async (e)=>{
   const id = btn.dataset.id
   const action = btn.dataset.action
 
+  if (action === 'stock') {
+    const row = btn.closest('.prod-row')
+    const input = row.querySelector('.stock-quantity')
+    const feedback = row.querySelector('.stock-feedback')
+    if (!input.reportValidity()) return
+    const stock = input.value.trim() === '' ? null : Number(input.value)
+    if (stock != null && (!Number.isInteger(stock) || stock < 0)) return
+    btn.disabled = true
+    setFeedback(feedback)
+    try {
+      let query = supabase.from('produtos').update({ stock }).eq('id', id)
+      query = input.dataset.originalStock === '' ? query.is('stock', null) : query.eq('stock', Number(input.dataset.originalStock))
+      const { data, error } = await query.select('id, stock').maybeSingle()
+      if (error) throw error
+      if (!data) {
+        await loadProdutos()
+        alert('O estoque foi alterado em outra sessão. Confira a quantidade atual antes de salvar.')
+        return
+      }
+      input.dataset.originalStock = data.stock == null ? '' : String(data.stock)
+      setFeedback(feedback, 'Estoque atualizado.')
+    } catch (error) {
+      setFeedback(feedback, 'Não foi possível salvar o estoque. Tente novamente.', true)
+    } finally {
+      btn.disabled = false
+    }
+    return
+  }
+
   if(action === 'edit'){
     // ... (código de editar existente, sem mudanças) ...
     const { data } = await supabase.from('produtos').select('*').eq('id', id).single()
@@ -403,6 +514,8 @@ produtosList.addEventListener('click', async (e)=>{
     document.getElementById('produto-nome').value = data.name
     document.getElementById('produto-desc').value = data.description
     document.getElementById('produto-preco').value = data.price
+    stockInput.value = data.stock ?? ''
+    editingStock = data.stock ?? null
     document.getElementById('produto-codigo').value = data.codigo || ''
     document.getElementById('produto-cat').value = data.category
     document.getElementById('produto-img').value = data.image_url || ''
@@ -529,10 +642,14 @@ produtoForm.addEventListener('submit', async (e)=>{
   }
 
   const id = document.getElementById('produto-id').value
+  if (!stockInput.reportValidity()) return
+  const stock = stockInput.value.trim() === '' ? null : Number(stockInput.value)
+  if (stock != null && (!Number.isInteger(stock) || stock < 0)) return
   const payload = {
     name: document.getElementById('produto-nome').value,
     description: document.getElementById('produto-desc').value,
     price: Number(document.getElementById('produto-preco').value),
+    stock,
     codigo: Number(document.getElementById('produto-codigo').value),
     category: document.getElementById('produto-cat').value,
     image_url: document.getElementById('produto-img').value || null,
@@ -540,8 +657,13 @@ produtoForm.addEventListener('submit', async (e)=>{
   }
 
   if(id){
-    const { error } = await supabase.from('produtos').update(payload).eq('id', id)
+    const stockChanged = stock !== editingStock
+    if (!stockChanged) delete payload.stock
+    let query = supabase.from('produtos').update(payload).eq('id', id)
+    if (stockChanged) query = editingStock == null ? query.is('stock', null) : query.eq('stock', editingStock)
+    const { data, error } = await query.select('id').maybeSingle()
     if(error) return alert(error.message)
+    if (!data) return alert('O produto ou o estoque foi alterado. Abra o produto novamente antes de salvar.')
     alert('Produto atualizado');
   } else {
     const { error } = await supabase.from('produtos').insert(payload)
@@ -565,6 +687,7 @@ document.getElementById('cancel-edit').addEventListener('click', () => {
 
 
 // inicialização
+const captchaReady = initializeCaptcha()
 handleAuthState()
 
 // Fim do admin.js
